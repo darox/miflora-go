@@ -1,4 +1,4 @@
-package error
+package errorhandler
 
 import (
 	"fmt"
@@ -7,7 +7,7 @@ import (
 
 func Check(err error) {
 	if err != nil {
-		fmt.Println(err)
+		fmt.Printf("%v", err)
 		os.Exit(1)
 	}
 }

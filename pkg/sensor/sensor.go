@@ -7,122 +7,333 @@ import (
 	"strings"
 	"time"
 
-	"github.com/darox/miflora-go/pkg/error"
-	"github.com/darox/miflora-go/pkg/model"
+	"github.com/darox/miflora-go/pkg/configuration"
 	"github.com/go-ble/ble"
 )
 
-// writes the characteristic to allow the read of temperature, light, moisture and conductivity sensor data
-func enableRead(cln ble.Client, p *ble.Profile) {
-	// UUID of characteristic to enable read of temperature, light, moisture and conductivity sensor data
-	const u = "00001a0000001000800000805f9b34fb"
-	enableReadUUID := ble.MustParse(u)
-	// bytes to enable read
-	enableReadBytes := []byte{0xa0, 0x1f}
-	for _, s := range p.Services {
-		for _, c := range s.Characteristics {
-			if c.UUID.Equal(enableReadUUID) {
-				if (c.Property & ble.CharWrite) != 0 {
-					err := cln.WriteCharacteristic(c, enableReadBytes, false)
-					error.Check(err)
-				}
-			}
-		}
-	}
-}
-
-// reads the characteristic to get firmware version and battery level
-func readBattFw(cln ble.Client, p *ble.Profile) {
-	// UUID of characteristic holding the battery level and firmware version
-	const u = "00001a0200001000800000805f9b34fb"
-	battFwUUID := ble.MustParse(u)
-	for _, s := range p.Services {
-		// UUID of battery level and firmware version characteristic
-		for _, c := range s.Characteristics {
-			if c.UUID.Equal(battFwUUID) {
-				if (c.Property & ble.CharRead) != 0 {
-					b, err := cln.ReadCharacteristic(c)
-					error.Check(err)
-					fmt.Printf("\n🔋  Battery Level: %d%%\n⚙️   Firmware: %s\n", b[0], b[2:])
-				}
-			}
-		}
-	}
-}
-
-// calls funcs to read firmware,battery, conductivity, humidity, light and temperature sensor data
-func ReadAll(config *model.Configuration) {
-	for _, device := range *config.Devices {
+func GetReadings(c *configuration.Configuration) (devicesReadings DevicesReadings, err error) {
+	// loop through devices
+	for _, device := range *c.Devices {
+		// check if device address follows the correct format. 
 		filter := func(a ble.Advertisement) bool {
 			return strings.EqualFold(a.Addr().String(), *device.Adddress)
 		}
-		// Scan for specified durantion, or until interrupted by user.
-		if device.Alias != nil {
-			fmt.Printf("\nScanning on device %s with alias %s \n", *device.Adddress, *device.Alias)
-		} else {
-			fmt.Printf("\nScanning on device %s \n", *device.Adddress)
+		
+		d := Device{
+			Device:    device,
+			Identifier: nil,
 		}
-		ctx := ble.WithSigHandler(context.WithTimeout(context.Background(), *config.ScanDuration*time.Second))
+		// Define identifier to use for device based on alias or address
+		d.defineIdentifier()
+
+		if c.StructuredOutput == nil || !*c.StructuredOutput {
+			printFormattedProgress("scanning", *d.Identifier)
+		} else {
+			printStructuredProgress("scanning", *d.Identifier)
+		}
+
+		// Setup context with timeout
+		ctx := ble.WithSigHandler(context.WithTimeout(context.Background(), *c.ScanDuration*time.Second))
+		// scan for device
 		cln, err := ble.Connect(ctx, filter)
 
 		if err != nil {
-			fmt.Printf("Failed to connect to device with address: %s  and alias %s \n", *device.Adddress, *device.Alias)
-			continue
+			if c.StructuredOutput == nil || !*c.StructuredOutput {
+				printFormattedProgress("failed", *d.Identifier)
+				continue
+			} else {
+				printStructuredProgress("failed", *d.Identifier)
+				continue
+			}
 		} else {
-			fmt.Printf("Connected to device with address: %s  and alias %s \n", *device.Adddress, *device.Alias)
+			if c.StructuredOutput == nil || !*c.StructuredOutput {
+				printFormattedProgress("connected", *d.Identifier)
+			} else {
+				printStructuredProgress("connected", *d.Identifier)
+			}
 
-			// Make sure we had the chance to print out the message.
 			done := make(chan struct{})
-			// Normally, the connection is disconnected by us after our exploration.
-			// However, it can be asynchronously disconnected by the remote peripheral.
-			// So we wait(detect) the disconnection in the go routine.
+
 			go func() {
 				<-cln.Disconnected()
-				fmt.Printf("\nDisconnected from device with address: %s \n", cln.Addr())
+				if c.StructuredOutput == nil || !*c.StructuredOutput {
+					printFormattedProgress("disconnected", *d.Identifier)
+				} else {
+					printStructuredProgress("disconnected", *d.Identifier)
+				}
 				close(done)
 			}()
 
 			p, err := cln.DiscoverProfile(true)
-			error.Check(err)
+			// continue if error occurs as we wanna try to connect to the next device
+			if err != nil {
+				continue
+			}
 
-			// Enable sensor read
-			enableRead(cln, p)
+			err = d.enableSensorReadings(cln, p)
+			// continue if error occurs as we wanna try to connect to the next device
+			if err != nil {
+				continue
+			}
 
-			// Read battery and firmware
-			readBattFw(cln, p)
+			// read battery level and firmware version
+			systemReadings, err := getSystemReadings(cln, p)
+			// continue if error occurs as we wanna try to connect to the next device
+			if err != nil {
+				continue
+			}
 
 			// Read sensor data
-			readCondHumLighTemp(cln, p)
+			sensorReadings, err := getSensorReadings(cln, p)
+			if err != nil {
+				continue
+			}
+
+			deviceReading := DeviceReadings{
+				Alias:          *device.Alias,
+				SystemReadings: systemReadings,
+				SensorReadings:  sensorReadings,
+			}
+			// Add device readings to the list of devices readings
+			devicesReadings.Add(deviceReading)
 
 			err = cln.CancelConnection()
-			error.Check(err)
+			if err != nil {
+				continue
+			}
 
 			<-done
 		}
 	}
+	return devicesReadings, nil
 }
 
-// reads the characteristic to get conductivity, humidity, light and temperature sensor data
-func readCondHumLighTemp(cln ble.Client, p *ble.Profile) {
-	// UUID of characteristic holding the sensor data for conductivity, humidity, light and temperature
-	const u = "00001a0100001000800000805f9b34fb"
-	condHumLighTempChar := ble.MustParse(u)
+// Enable read of temperature, humidity, light and conductivity
+func (device *Device) enableSensorReadings(cln ble.Client, p *ble.Profile) (err error) {
+	// UUID service and characteristic to enable read
+	cu := ble.MustParse("00001a0000001000800000805f9b34fb")
+	su := ble.MustParse("0000120400001000800000805f9b34fb")
+	// bytes to enable read
+	enableSensorReadingsBytes := []byte{0xa0, 0x1f}
+
+	// find service
+	s := findService(p, su)
+	if s == nil {
+		return fmt.Errorf("service not found")
+	}
+	// find characteristic
+	c := findCharacteristic(s, cu)
+	if c == nil {
+		return fmt.Errorf("characteristic not found")
+	}
+
+	// write characteristic
+	err = cln.WriteCharacteristic(c, enableSensorReadingsBytes, false)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// Read the characteristics for battery level and firmware version
+func getSystemReadings(cln ble.Client, p *ble.Profile) (systemReadings SystemReadings, err error) {
+	// UUID service and characteristic to read battery level and firmware version
+	cu := ble.MustParse("00001a0200001000800000805f9b34fb")
+	su := ble.MustParse("0000120400001000800000805f9b34fb")
+
+	// find service and characteristic
+	s := findService(p, su)
+	if s == nil {
+		return systemReadings, fmt.Errorf("service not found")
+	}
+
+	c := findCharacteristic(s, cu)
+	if c == nil {
+		return systemReadings, fmt.Errorf("characteristic not found")
+	}
+
+	b, err := cln.ReadCharacteristic(c)
+	if err != nil {
+		return systemReadings, err
+	}
+
+	systemReadings = SystemReadings{
+		Battery:  uint16(b[0]),
+		Firmware: string(b[2:]),
+	}
+	return systemReadings, nil
+}
+
+// Define identifier of the device
+func (device *Device) defineIdentifier() {
+	if device.Device.Alias != nil {
+		device.Identifier = device.Device.Alias
+	} else {
+		device.Identifier = device.Device.Adddress
+	}
+}
+
+// Read the characteristic to get conductivity, humidity, light and temperature sensor data
+func getSensorReadings(cln ble.Client, p *ble.Profile) (sensorReadings SensorReadings, err error) {
+	// UUID of service and characteristic holding the sensor data
+	cu := ble.MustParse("00001a0100001000800000805f9b34fb")
+	su := ble.MustParse("0000120400001000800000805f9b34fb")
+
+	// Find the service and characteristic.
+	s := findService(p, su)
+	if s == nil {
+		return sensorReadings, fmt.Errorf("service not found")
+	}
+
+	c := findCharacteristic(s, cu)
+	if c == nil {
+		return sensorReadings, fmt.Errorf("characteristic not found")
+	}
+
+	if (c.Property & ble.CharRead) != 0 {
+		b, err := cln.ReadCharacteristic(c)
+		if err != nil {
+			return sensorReadings, err
+		}
+		var subtrahend float32 = 10.0
+		sensorReadings = SensorReadings{
+			Conductivity: binary.LittleEndian.Uint16(b[8:10]),
+			Moisture:     uint16(b[7]),
+			Light:        binary.LittleEndian.Uint32(b[3:7]),
+			Temp:         float32(binary.LittleEndian.Uint16(b[0:2])) / subtrahend,
+		}
+		return sensorReadings, nil
+	}
+	return sensorReadings, nil
+}
+
+// Print the progress of the scan in a formatted way
+func printFormattedProgress(s string, d string) {
+	switch s {
+	case "scanning":
+		fmt.Printf("📡  Scanning for %s\n", d)
+	case "connected":
+		fmt.Printf("✅  Connected to %s\n", d)
+	case "disconnected":
+		fmt.Printf("👋  Disconnected from %s\n", d)
+	case "failed":
+		fmt.Printf("⛔  Failed to connect to %s\n", d)
+	}
+}
+
+// Print the progress of the scan in a structured way
+func printStructuredProgress(s string, d string) {
+	t := time.Now().Format(time.RFC3339)
+	switch s {
+	case "scanning":
+		fmt.Printf("{\"time\":\"%s\",\"status\":\"scanning\",\"device\":\"%s\"}\n", t, d)
+	case "connected":
+		fmt.Printf("{\"time\":\"%s\",\"status\":\"connected\",\"device\":\"%s\"}\n", t, d)
+	case "disconnected":
+		fmt.Printf("{\"time\":\"%s\",\"status\":\"disconnected\",\"device\":\"%s\"}\n", t, d)
+	case "failed":
+		fmt.Printf("{\"time\":\"%s\",\"status\":\"failed\",\"device\":\"%s\"}\n", t, d)
+	}
+}
+
+// Find the service based on the UUID
+func findService(p *ble.Profile, u ble.UUID) *ble.Service {
 	for _, s := range p.Services {
-		for _, c := range s.Characteristics {
-			if c.UUID.Equal(condHumLighTempChar) {
-				if (c.Property & ble.CharRead) != 0 {
-					b, err := cln.ReadCharacteristic(c)
-					error.Check(err)
-					// Temperature is stored as a 16-bit signed integer in units of 0.1°C
-					var subtrahend float32 = 10.0
-					temp := float32(binary.LittleEndian.Uint16(b[0:2])) / subtrahend
-					light := binary.LittleEndian.Uint32(b[3:7])
-					moisture := b[7]
-					conductivity := binary.LittleEndian.Uint16(b[8:10])
-					fmt.Printf("🌡️   Temperature: %.1f°C\n💡  Light: %d Lux\n💧  Moisture: %d%%\n⚡  Conductivity: %d\n",
-						temp, light, moisture, conductivity)
-				}
-			}
+		if s.UUID.Equal(u) {
+			return s
 		}
 	}
+	return nil
+}
+
+// Find the characteristic based on the UUID
+func findCharacteristic(s *ble.Service, u ble.UUID) *ble.Characteristic {
+	for _, c := range s.Characteristics {
+		if c.UUID.Equal(u) {
+			return c
+		}
+	}
+	return nil
+}
+
+// Add a new DeviceReadings to DevicesReadings
+func (devicesReadings *DevicesReadings) Add(deviceReadings DeviceReadings) []DeviceReadings {
+	devicesReadings.DevicesReadings = append(devicesReadings.DevicesReadings, deviceReadings)
+	return devicesReadings.DevicesReadings
+}
+
+// Print the DevicesReadings in a formatted way
+func (devicesReadings DevicesReadings) PrintFormatted() {
+	for _, e := range devicesReadings.DevicesReadings {
+		fmt.Printf("\n🪴   Name: %s \n"+
+			"🔋  Battery Level: %d%% \n"+
+			"⚙️   Firmware: %s \n"+
+			"🌡️   Temperature: %.1f°C \n"+
+			"💧  Light: %d Lux \n"+
+			"⚡  Moisture: %d%% \n"+
+			"🌱  Conductivity: %d µS/cm \n",
+			e.Alias,
+			e.SystemReadings.Battery,
+			e.SystemReadings.Firmware,
+			e.SensorReadings.Temp,
+			e.SensorReadings.Light,
+			e.SensorReadings.Moisture,
+			e.SensorReadings.Conductivity)
+	}
+}
+
+// Print the DevicesReadings in a structured way
+func (devicesReadings DevicesReadings) PrintStructured() {
+	for _, e := range devicesReadings.DevicesReadings {
+		fmt.Printf("{"+
+			"\"time\": \"%s\", "+
+			"\"alias\": \"%s\", "+
+			"\"battery\": %d, "+
+			"\"firmware\": \"%s\", "+
+			"\"temperature\": %.1f, "+
+			"\"light\": %d, "+
+			"\"moisture\": %d, "+
+			"\"conductivity\": %d"+
+			"}\n",
+			time.Now().Format(time.RFC3339),
+			e.Alias,
+			e.SystemReadings.Battery,
+			e.SystemReadings.Firmware,
+			e.SensorReadings.Temp,
+			e.SensorReadings.Light,
+			e.SensorReadings.Moisture,
+			e.SensorReadings.Conductivity)
+	}
+}
+
+// DevicesReadings is a struct that holds the readings from all devices
+type DevicesReadings struct {
+	DevicesReadings []DeviceReadings
+}
+
+// DeviceReadings is a struct that holds the readings from a single device
+type DeviceReadings struct {
+	Alias          string
+	SystemReadings SystemReadings
+	SensorReadings SensorReadings
+}
+
+// Device is a struct that holds the device information
+type Device struct {
+	Device     configuration.Device
+	Identifier *string
+}
+
+// SystemReadings is a struct that holds the battery and firmware information
+type SystemReadings struct {
+	Battery  uint16
+	Firmware string
+}
+
+// SensorReadings is a struct that holds the conductivity, moisture, light and temperature information
+type SensorReadings struct {
+	Conductivity uint16
+	Moisture     uint16
+	Light        uint32
+	Temp         float32
 }

@@ -11,7 +11,7 @@ A Golang application for reading data from Xiaomi Mi Flora plant sensors.
 
 1. Install Golang on your computer if you don't have it already installed
 2. Clone the repository: `git clone https://github.com/darox/miflora-go`
-3. Build the application: `cd miflora-go && go build`
+3. Build the application: `cd cmd/miflora-go && go build`
 4. Add capabilities to run as none-root user: `sudo setcap 'cap_net_raw,cap_net_admin+eip' miflora-go`
 
 ## Usage
