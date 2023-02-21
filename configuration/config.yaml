@@ -1,0 +1,11 @@
+# Optional: default adapter to use
+adapter: "default"
+# List of devices to monitor
+devices:
+  # Optional: alias for the devices
+  - alias: "Monstera"
+    # Device address. UUID on Mac, MAC address on Linux
+    address: "422b23155c369dfee0aea210d1a9bc37"
+# Optional: scan for devices for 5 seconds or untiil interrupted
+scanDuration: 15
+structuredOutput: true
