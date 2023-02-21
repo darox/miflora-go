@@ -14,9 +14,11 @@ A Golang application for reading data from Xiaomi Mi Flora plant sensors.
 3. Build the application: `cd cmd/miflora-go && go build`
 4. Add capabilities to run as none-root user: `sudo setcap 'cap_net_raw,cap_net_admin+eip' miflora-go`
 
+
 ## Usage
 
 Under Linux, the application uses the mac address to connect to devices; under MacOs the UUID.
+
 
 1. Copy `config/config.yaml` to the same folder where miflora-go will run or use the param `--config-path` to specify the path of the config file
 2. The application will now scan the device and printout the result
