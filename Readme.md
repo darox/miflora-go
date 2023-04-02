@@ -11,8 +11,8 @@ A Golang application for reading data from Xiaomi Mi Flora plant sensors.
 🔋  Battery Level: 33% 
 ⚙️   Firmware: 3.2.2 
 🌡️  Temperature: 24.1°C 
-⚡  Light: 15533 Lux 
-💧   Moisture: 21% 
+⚡   Light: 15533 Lux 
+💧  Moisture: 21% 
 🌱  Conductivity: 190 µS/cm 
 ```
 
