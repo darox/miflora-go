@@ -36,6 +36,11 @@ type Configuration struct {
 	Devices          *[]Device      `mapstructure:"devices" validate:"dive,required,alphanumunicode"`
 	ScanDuration     *time.Duration `mapstructure:"scanDuration" validate:"numeric"`
 	StructuredOutput *bool          `mapstructure:"structuredOutput"`
+	Forwarder        *Forwarder     `mapstructure:"forwarder"`
+}
+
+type Forwarder struct {
+	Url 	*string `mapstructure:"url" validate:"required,url"`
 }
 
 type Device struct {
