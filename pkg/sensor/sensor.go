@@ -84,7 +84,7 @@ func GetReadings(c *configuration.Configuration) (devicesReadings DevicesReading
 			}
 
 			// Read sensor data
-			sensorReadings, err := getSensorReadings(cln, p)
+			sensorsReadings, err := getSensorReadings(cln, p)
 			if err != nil {
 				continue
 			}
@@ -92,7 +92,7 @@ func GetReadings(c *configuration.Configuration) (devicesReadings DevicesReading
 			deviceReading := DeviceReadings{
 				Alias:          *device.Alias,
 				SystemReadings: systemReadings,
-				SensorReadings:  sensorReadings,
+				SensorsReadings:  sensorsReadings,
 			}
 			// Add device readings to the list of devices readings
 			devicesReadings.Add(deviceReading)
@@ -174,7 +174,7 @@ func (device *Device) defineIdentifier() {
 }
 
 // Read the characteristic to get conductivity, humidity, light and temperature sensor data
-func getSensorReadings(cln ble.Client, p *ble.Profile) (sensorReadings SensorReadings, err error) {
+func getSensorReadings(cln ble.Client, p *ble.Profile) (sensorReadings SensorsReadings, err error) {
 	// UUID of service and characteristic holding the sensor data
 	cu := ble.MustParse("00001a0100001000800000805f9b34fb")
 	su := ble.MustParse("0000120400001000800000805f9b34fb")
@@ -196,11 +196,11 @@ func getSensorReadings(cln ble.Client, p *ble.Profile) (sensorReadings SensorRea
 			return sensorReadings, err
 		}
 		var subtrahend float32 = 10.0
-		sensorReadings = SensorReadings{
+		sensorReadings = SensorsReadings{
 			Conductivity: binary.LittleEndian.Uint16(b[8:10]),
 			Moisture:     uint16(b[7]),
 			Light:        binary.LittleEndian.Uint32(b[3:7]),
-			Temp:         float32(binary.LittleEndian.Uint16(b[0:2])) / subtrahend,
+			Temperature:  float32(binary.LittleEndian.Uint16(b[0:2])) / subtrahend,
 		}
 		return sensorReadings, nil
 	}
@@ -269,16 +269,16 @@ func (devicesReadings DevicesReadings) PrintFormatted() {
 			"🔋  Battery Level: %d%% \n"+
 			"⚙️   Firmware: %s \n"+
 			"🌡️   Temperature: %.1f°C \n"+
-			"💧  Light: %d Lux \n"+
-			"⚡  Moisture: %d%% \n"+
+			"⚡  Light: %d Lux \n"+
+			"💧  Moisture: %d%% \n"+
 			"🌱  Conductivity: %d µS/cm \n",
 			e.Alias,
 			e.SystemReadings.Battery,
 			e.SystemReadings.Firmware,
-			e.SensorReadings.Temp,
-			e.SensorReadings.Light,
-			e.SensorReadings.Moisture,
-			e.SensorReadings.Conductivity)
+			e.SensorsReadings.Temperature,
+			e.SensorsReadings.Light,
+			e.SensorsReadings.Moisture,
+			e.SensorsReadings.Conductivity)
 	}
 }
 
@@ -299,10 +299,10 @@ func (devicesReadings DevicesReadings) PrintStructured() {
 			e.Alias,
 			e.SystemReadings.Battery,
 			e.SystemReadings.Firmware,
-			e.SensorReadings.Temp,
-			e.SensorReadings.Light,
-			e.SensorReadings.Moisture,
-			e.SensorReadings.Conductivity)
+			e.SensorsReadings.Temperature,
+			e.SensorsReadings.Light,
+			e.SensorsReadings.Moisture,
+			e.SensorsReadings.Conductivity)
 	}
 }
 
@@ -315,7 +315,7 @@ type DevicesReadings struct {
 type DeviceReadings struct {
 	Alias          string
 	SystemReadings SystemReadings
-	SensorReadings SensorReadings
+	SensorsReadings SensorsReadings
 }
 
 // Device is a struct that holds the device information
@@ -331,9 +331,9 @@ type SystemReadings struct {
 }
 
 // SensorReadings is a struct that holds the conductivity, moisture, light and temperature information
-type SensorReadings struct {
+type SensorsReadings struct {
 	Conductivity uint16
 	Moisture     uint16
 	Light        uint32
-	Temp         float32
+	Temperature  float32
 }
